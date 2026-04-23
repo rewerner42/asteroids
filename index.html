@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+  ASTEROIDS — single-file HTML5 game (no build step, no external assets).
+
+  DEPLOY
+    • Netlify Drop : drag this index.html onto https://app.netlify.com/drop
+                     for an instant shareable URL.
+    • GitHub Pages : commit as index.html on a branch, then in the repo
+                     Settings → Pages → "Deploy from a branch" → root.
+    • Local        : just open index.html in any modern browser
+                     (desktop or phone). File:// works offline.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>ASTEROIDS</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000; color: #fff;
+    overflow: hidden;
+    font-family: 'Courier New', Courier, monospace;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+  canvas { position: fixed; inset: 0; display: block; background: #000; }
+
+  /* HUD */
+  #hud {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    font-size: clamp(14px, 3.5vw, 22px);
+    letter-spacing: 2px;
+  }
+  #hud .corner { position: absolute; text-shadow: 0 0 4px #fff; }
+  #hud .tl { top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); }
+  #hud .tc { top: max(12px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); }
+  #hud .tr {
+    top: max(12px, env(safe-area-inset-top));
+    right: calc(max(12px, env(safe-area-inset-right)) + 54px);
+    text-align: right;
+  }
+
+  /* Mute button */
+  #mute {
+    position: fixed;
+    top: max(8px, env(safe-area-inset-top));
+    right: max(8px, env(safe-area-inset-right));
+    width: 44px; height: 44px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.35);
+    color: #fff;
+    border-radius: 8px;
+    font-family: inherit; font-size: 20px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 5;
+  }
+  #mute:active { background: rgba(255,255,255,0.18); }
+  #mute.muted { opacity: 0.45; text-decoration: line-through; }
+
+  /* On-screen touch controls */
+  .touch-ctrls { position: fixed; inset: 0; pointer-events: none; display: none; }
+  body.is-touch .touch-ctrls { display: block; }
+  .btn {
+    position: absolute;
+    width: 80px; height: 80px;
+    border: 2px solid rgba(255,255,255,0.55);
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    border-radius: 50%;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 28px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: auto;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  .btn.active {
+    background: rgba(255,255,255,0.28);
+    border-color: #fff;
+  }
+  #btn-left   { left: max(16px, env(safe-area-inset-left));                      bottom: max(24px, env(safe-area-inset-bottom)); }
+  #btn-right  { left: calc(max(16px, env(safe-area-inset-left)) + 96px);         bottom: max(24px, env(safe-area-inset-bottom)); }
+  #btn-thrust { right: max(16px, env(safe-area-inset-right));                    bottom: max(24px, env(safe-area-inset-bottom)); }
+  #btn-fire   { right: max(16px, env(safe-area-inset-right));                    bottom: calc(max(24px, env(safe-area-inset-bottom)) + 96px); }
+
+  /* Overlay (start / game over) */
+  #overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.78);
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 22px;
+    text-align: center; padding: 20px;
+    z-index: 10;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h1 {
+    font-size: clamp(34px, 10vw, 72px);
+    letter-spacing: 8px;
+    text-shadow: 0 0 12px #fff;
+  }
+  #overlay p  { font-size: clamp(14px, 3.5vw, 20px); line-height: 1.6; opacity: 0.9; }
+  #overlay .hint { font-size: clamp(11px, 2.5vw, 14px); opacity: 0.6; letter-spacing: 1px; }
+  #overlay button {
+    padding: 18px 30px;
+    font-family: inherit;
+    font-size: clamp(16px, 4vw, 22px);
+    letter-spacing: 3px;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    border: 2px solid #fff;
+    cursor: pointer;
+    min-height: 64px; min-width: 220px;
+  }
+  #overlay button:active { background: rgba(255,255,255,0.25); }
+</style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div class="corner tl">
+      SCORE <span id="score">0</span><br>
+      LIVES <span id="lives">3</span>
+    </div>
+    <div class="corner tc">LEVEL <span id="level">1</span></div>
+    <div class="corner tr">HI <span id="high">0</span></div>
+  </div>
+
+  <button id="mute" aria-label="toggle sound">&#9834;</button>
+
+  <div class="touch-ctrls">
+    <div class="btn" id="btn-left">&#9664;</div>
+    <div class="btn" id="btn-right">&#9654;</div>
+    <div class="btn" id="btn-thrust">&#9650;</div>
+    <div class="btn" id="btn-fire">&#9679;</div>
+  </div>
+
+  <div id="overlay">
+    <h1 id="overlay-title">ASTEROIDS</h1>
+    <p id="overlay-msg">Destroy the rocks.<br>Survive as long as you can.</p>
+    <button id="overlay-btn">TAP TO START</button>
+    <p class="hint" id="overlay-hint"></p>
+  </div>
+
+<script>
+(() => {
+'use strict';
+
+// ============================================================
+//  Utilities
+// ============================================================
+const TAU = Math.PI * 2;
+const rand  = (a, b) => a + Math.random() * (b - a);
+const randi = (a, b) => Math.floor(rand(a, b));
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const wrap  = (v, max) => ((v % max) + max) % max;
+
+// ============================================================
+//  Canvas + HiDPI
+// ============================================================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+
+function resize() {
+  DPR = Math.max(1, window.devicePixelRatio || 1);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width  = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', resize);
+resize();
+
+// ============================================================
+//  Audio (Web Audio API, no files)
+// ============================================================
+const Audio_ = (() => {
+  let ac = null;
+  let muted = localStorage.getItem('ast_mute') === '1';
+
+  function ensure() {
+    if (!ac) {
+      try { ac = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch (e) { return null; }
+    }
+    if (ac.state === 'suspended') ac.resume();
+    return ac;
+  }
+  function beep(freq, dur, type = 'square', gain = 0.07, slideTo = null) {
+    if (muted) return;
+    const a = ensure(); if (!a) return;
+    const t = a.currentTime;
+    const osc = a.createOscillator();
+    const g   = a.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo != null) osc.frequency.exponentialRampToValueAtTime(Math.max(40, slideTo), t + dur);
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(a.destination);
+    osc.start(t);
+    osc.stop(t + dur);
+  }
+  function noise(dur, gain = 0.18) {
+    if (muted) return;
+    const a = ensure(); if (!a) return;
+    const n = Math.floor(a.sampleRate * dur);
+    const buf = a.createBuffer(1, n, a.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = a.createBufferSource();
+    src.buffer = buf;
+    const g = a.createGain();
+    g.gain.value = gain;
+    src.connect(g); g.connect(a.destination);
+    src.start();
+  }
+  return {
+    shoot()   { beep(880, 0.08, 'square',   0.05, 260); },
+    explode() { noise(0.28, 0.20); },
+    thrust()  { beep(100 + Math.random() * 40, 0.05, 'sawtooth', 0.03); },
+    hit()     { beep(220, 0.22, 'square', 0.09, 60); },
+    toggle()  { muted = !muted; localStorage.setItem('ast_mute', muted ? '1' : '0'); return muted; },
+    isMuted() { return muted; },
+    resume()  { ensure(); }
+  };
+})();
+
+// ============================================================
+//  Input — keyboard + multi-touch buttons + tap-to-fire canvas
+//  (sources are OR-ed, so keyboard & touch can't cancel each other)
+// ============================================================
+const input = { left: false, right: false, thrust: false, fire: false };
+const src = {
+  lk: false, lb: false,           // left:   key, button
+  rk: false, rb: false,           // right
+  tk: false, tb: false,           // thrust
+  fk: false, fb: false, fc: false // fire: key, button, canvas-tap
+};
+function refresh() {
+  input.left   = src.lk || src.lb;
+  input.right  = src.rk || src.rb;
+  input.thrust = src.tk || src.tb;
+  input.fire   = src.fk || src.fb || src.fc;
+}
+
+// --- keyboard ---
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  let used = true;
+  switch (e.key) {
+    case 'ArrowLeft':  case 'a': case 'A': src.lk = true; break;
+    case 'ArrowRight': case 'd': case 'D': src.rk = true; break;
+    case 'ArrowUp':    case 'w': case 'W': src.tk = true; break;
+    case ' ': case 'Spacebar':             src.fk = true; break;
+    case 'm': case 'M': toggleMute(); break;
+    case 'Enter': if (game.state !== 'playing') startGame(); break;
+    default: used = false;
+  }
+  if (used) { e.preventDefault(); refresh(); }
+});
+window.addEventListener('keyup', (e) => {
+  let used = true;
+  switch (e.key) {
+    case 'ArrowLeft':  case 'a': case 'A': src.lk = false; break;
+    case 'ArrowRight': case 'd': case 'D': src.rk = false; break;
+    case 'ArrowUp':    case 'w': case 'W': src.tk = false; break;
+    case ' ': case 'Spacebar':             src.fk = false; break;
+    default: used = false;
+  }
+  if (used) refresh();
+});
+
+// --- touch detection ---
+const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+if (isTouch) document.body.classList.add('is-touch');
+
+// --- on-screen buttons (touchstart/touchend for zero input lag) ---
+function bindBtn(el, setOn, setOff) {
+  const down = (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    el.classList.add('active');
+    setOn(); Audio_.resume(); refresh();
+  };
+  const up = (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    el.classList.remove('active');
+    setOff(); refresh();
+  };
+  el.addEventListener('touchstart', down, { passive: false });
+  el.addEventListener('touchend',   up,   { passive: false });
+  el.addEventListener('touchcancel', up,  { passive: false });
+  // mouse fallback so the touch UI is also testable on desktop
+  el.addEventListener('mousedown', down);
+  el.addEventListener('mouseup',   up);
+  el.addEventListener('mouseleave', up);
+}
+bindBtn(document.getElementById('btn-left'),   () => src.lb = true, () => src.lb = false);
+bindBtn(document.getElementById('btn-right'),  () => src.rb = true, () => src.rb = false);
+bindBtn(document.getElementById('btn-thrust'), () => src.tb = true, () => src.tb = false);
+bindBtn(document.getElementById('btn-fire'),   () => src.fb = true, () => src.fb = false);
+
+// --- tap-anywhere-on-canvas to fire (multi-touch safe) ---
+let canvasTouches = 0;
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  Audio_.resume();
+  canvasTouches += e.changedTouches.length;
+  if (game.state === 'playing') { src.fc = true; refresh(); }
+}, { passive: false });
+function canvasUp(e) {
+  e.preventDefault();
+  canvasTouches = Math.max(0, canvasTouches - e.changedTouches.length);
+  if (canvasTouches === 0) { src.fc = false; refresh(); }
+}
+canvas.addEventListener('touchend',    canvasUp, { passive: false });
+canvas.addEventListener('touchcancel', canvasUp, { passive: false });
+canvas.addEventListener('click', () => Audio_.resume());
+
+// Block iOS pinch/double-tap zoom on the game surface
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('dblclick',     (e) => e.preventDefault());
+
+// ============================================================
+//  Entities
+// ============================================================
+function makeShip() {
+  return {
+    x: W / 2, y: H / 2, vx: 0, vy: 0,
+    angle: -Math.PI / 2,   // facing up
+    radius: 14,
+    thrusting: false,
+    invuln: 2.0            // seconds of spawn invulnerability
+  };
+}
+function makeAsteroid(x, y, size, speedScale = 1) {
+  const radius = size === 'L' ? 44 : size === 'M' ? 26 : 14;
+  const base   = size === 'L' ? rand(20, 55)
+              : size === 'M' ? rand(35, 80)
+              :                 rand(55, 110);
+  const ang = rand(0, TAU);
+  const n = randi(8, 13);
+  const pts = [];
+  for (let i = 0; i < n; i++) pts.push(radius * rand(0.75, 1.15));
+  return {
+    x, y,
+    vx: Math.cos(ang) * base * speedScale,
+    vy: Math.sin(ang) * base * speedScale,
+    rot: rand(0, TAU),
+    spin: rand(-1.3, 1.3),
+    radius, size, pts
+  };
+}
+function makeBullet(x, y, angle) {
+  return {
+    x, y,
+    vx: Math.cos(angle) * 560,
+    vy: Math.sin(angle) * 560,
+    life: 0.9,
+    radius: 2.5
+  };
+}
+function makeParticle(x, y, angle, speed, life, color = '#fff') {
+  return {
+    x, y,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    life, maxLife: life,
+    color
+  };
+}
+
+// ============================================================
+//  Game state
+// ============================================================
+const game = {
+  state: 'menu',                   // menu | playing | dead | gameover
+  score: 0,
+  lives: 3,
+  level: 1,
+  high: parseInt(localStorage.getItem('ast_high') || '0', 10) || 0,
+  ship: null,
+  asteroids: [],
+  bullets: [],
+  particles: [],
+  fireCd: 0,
+  deadTimer: 0
+};
+
+function spawnLevel(level) {
+  game.asteroids = [];
+  const count = 3 + level;
+  const scale = 1 + (level - 1) * 0.12;
+  const cx = W / 2, cy = H / 2;
+  const safe = 180;                // keep rocks away from ship on spawn
+  for (let i = 0; i < count; i++) {
+    let x, y, tries = 0;
+    do {
+      x = rand(0, W); y = rand(0, H);
+      tries++;
+    } while (Math.hypot(x - cx, y - cy) < safe && tries < 20);
+    game.asteroids.push(makeAsteroid(x, y, 'L', scale));
+  }
+}
+
+function startGame() {
+  game.state = 'playing';
+  game.score = 0;
+  game.lives = 3;
+  game.level = 1;
+  game.bullets = [];
+  game.particles = [];
+  game.ship = makeShip();
+  game.fireCd = 0;
+  game.deadTimer = 0;
+  spawnLevel(1);
+  hideOverlay();
+  Audio_.resume();
+}
+
+function nextLevel() {
+  game.level++;
+  spawnLevel(game.level);
+}
+
+function loseLife() {
+  spawnExplosion(game.ship.x, game.ship.y, 28, 1.2);
+  Audio_.hit();
+  game.ship = null;
+  game.lives--;
+  if (game.lives <= 0) {
+    game.state = 'gameover';
+    if (game.score > game.high) {
+      game.high = game.score;
+      localStorage.setItem('ast_high', String(game.high));
+    }
+    showOverlay(
+      'GAME OVER',
+      `FINAL SCORE ${game.score}<br>HIGH SCORE ${game.high}`,
+      'TAP TO RESTART'
+    );
+  } else {
+    game.state = 'dead';
+    game.deadTimer = 1.2;
+  }
+}
+
+function respawnShip() {
+  game.ship = makeShip();
+  game.state = 'playing';
+}
+
+function spawnExplosion(x, y, count, scale = 1) {
+  for (let i = 0; i < count; i++) {
+    game.particles.push(makeParticle(
+      x, y, rand(0, TAU), rand(40, 200) * scale, rand(0.4, 0.9)
+    ));
+  }
+}
+
+function destroyAsteroid(i) {
+  const a = game.asteroids[i];
+  game.asteroids.splice(i, 1);
+  spawnExplosion(a.x, a.y, a.size === 'L' ? 18 : a.size === 'M' ? 12 : 8, 0.9);
+  Audio_.explode();
+  const scale = 1 + (game.level - 1) * 0.12;
+  if (a.size === 'L') {
+    game.score += 20;
+    game.asteroids.push(makeAsteroid(a.x, a.y, 'M', scale));
+    game.asteroids.push(makeAsteroid(a.x, a.y, 'M', scale));
+  } else if (a.size === 'M') {
+    game.score += 50;
+    game.asteroids.push(makeAsteroid(a.x, a.y, 'S', scale));
+    game.asteroids.push(makeAsteroid(a.x, a.y, 'S', scale));
+  } else {
+    game.score += 100;
+  }
+}
+
+// ============================================================
+//  Physics / update
+// ============================================================
+const ROT_SPEED     = 3.8;    // rad/s
+const THRUST_ACC    = 280;    // px/s^2
+const MAX_SPEED     = 440;    // px/s
+const DRAG          = 0.35;   // per-second (v *= exp(-DRAG*dt))
+const FIRE_INTERVAL = 0.18;   // s
+
+function update(dt) {
+  if (game.state === 'playing') {
+    updateShip(dt);
+    tryFire(dt);
+  } else if (game.state === 'dead') {
+    game.deadTimer -= dt;
+    if (game.deadTimer <= 0) respawnShip();
+  }
+
+  updateBullets(dt);
+  updateAsteroids(dt);
+  updateParticles(dt);
+
+  if (game.state === 'playing') handleCollisions();
+
+  if ((game.state === 'playing' || game.state === 'dead') && game.asteroids.length === 0) {
+    nextLevel();
+  }
+}
+
+function updateShip(dt) {
+  const s = game.ship; if (!s) return;
+
+  if (input.left)  s.angle -= ROT_SPEED * dt;
+  if (input.right) s.angle += ROT_SPEED * dt;
+
+  s.thrusting = input.thrust;
+  if (s.thrusting) {
+    s.vx += Math.cos(s.angle) * THRUST_ACC * dt;
+    s.vy += Math.sin(s.angle) * THRUST_ACC * dt;
+
+    // trailing particles
+    const bx = s.x - Math.cos(s.angle) * s.radius * 0.6;
+    const by = s.y - Math.sin(s.angle) * s.radius * 0.6;
+    game.particles.push(makeParticle(
+      bx, by,
+      s.angle + Math.PI + rand(-0.5, 0.5),
+      rand(60, 160), rand(0.12, 0.3),
+      '#ffb347'
+    ));
+    if (Math.random() < 0.35) Audio_.thrust();
+  }
+
+  const sp = Math.hypot(s.vx, s.vy);
+  if (sp > MAX_SPEED) { s.vx = s.vx / sp * MAX_SPEED; s.vy = s.vy / sp * MAX_SPEED; }
+
+  const damp = Math.exp(-DRAG * dt);
+  s.vx *= damp; s.vy *= damp;
+
+  s.x = wrap(s.x + s.vx * dt, W);
+  s.y = wrap(s.y + s.vy * dt, H);
+
+  if (s.invuln > 0) s.invuln -= dt;
+}
+
+function tryFire(dt) {
+  game.fireCd -= dt;
+  if (input.fire && game.fireCd <= 0 && game.ship) {
+    const s = game.ship;
+    const bx = s.x + Math.cos(s.angle) * s.radius;
+    const by = s.y + Math.sin(s.angle) * s.radius;
+    game.bullets.push(makeBullet(bx, by, s.angle));
+    game.fireCd = FIRE_INTERVAL;
+    Audio_.shoot();
+  }
+}
+
+function updateBullets(dt) {
+  for (let i = game.bullets.length - 1; i >= 0; i--) {
+    const b = game.bullets[i];
+    b.x = wrap(b.x + b.vx * dt, W);
+    b.y = wrap(b.y + b.vy * dt, H);
+    b.life -= dt;
+    if (b.life <= 0) game.bullets.splice(i, 1);
+  }
+}
+function updateAsteroids(dt) {
+  for (const a of game.asteroids) {
+    a.x = wrap(a.x + a.vx * dt, W);
+    a.y = wrap(a.y + a.vy * dt, H);
+    a.rot += a.spin * dt;
+  }
+}
+function updateParticles(dt) {
+  for (let i = game.particles.length - 1; i >= 0; i--) {
+    const p = game.particles[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= 0.98; p.vy *= 0.98;
+    p.life -= dt;
+    if (p.life <= 0) game.particles.splice(i, 1);
+  }
+}
+
+function handleCollisions() {
+  // bullets vs asteroids
+  for (let i = game.asteroids.length - 1; i >= 0; i--) {
+    const a = game.asteroids[i];
+    for (let j = game.bullets.length - 1; j >= 0; j--) {
+      const b = game.bullets[j];
+      const dx = a.x - b.x, dy = a.y - b.y;
+      if (dx * dx + dy * dy < a.radius * a.radius) {
+        game.bullets.splice(j, 1);
+        destroyAsteroid(i);
+        break;
+      }
+    }
+  }
+  // ship vs asteroids
+  const s = game.ship;
+  if (s && s.invuln <= 0) {
+    for (const a of game.asteroids) {
+      const dx = a.x - s.x, dy = a.y - s.y;
+      const r  = a.radius + s.radius - 3;
+      if (dx * dx + dy * dy < r * r) { loseLife(); break; }
+    }
+  }
+}
+
+// ============================================================
+//  Rendering
+// ============================================================
+function render() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  drawAsteroids();
+  drawBullets();
+  drawParticles();
+  drawShip();
+
+  updateHUD();
+}
+
+function drawShip() {
+  const s = game.ship; if (!s) return;
+  // flicker while invulnerable
+  if (s.invuln > 0 && Math.floor(s.invuln * 10) % 2 === 0) return;
+
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(s.angle);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo( s.radius,        0);
+  ctx.lineTo(-s.radius * 0.8,  s.radius * 0.7);
+  ctx.lineTo(-s.radius * 0.5,  0);
+  ctx.lineTo(-s.radius * 0.8, -s.radius * 0.7);
+  ctx.closePath();
+  ctx.stroke();
+
+  if (s.thrusting && Math.random() < 0.7) {
+    ctx.strokeStyle = '#ffb347';
+    ctx.beginPath();
+    ctx.moveTo(-s.radius * 0.5,  s.radius * 0.35);
+    ctx.lineTo(-s.radius * (0.9 + Math.random() * 0.6), 0);
+    ctx.lineTo(-s.radius * 0.5, -s.radius * 0.35);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawAsteroids() {
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  for (const a of game.asteroids) {
+    drawWrapped(a.x, a.y, a.radius, () => {
+      ctx.rotate(a.rot);
+      ctx.beginPath();
+      const n = a.pts.length;
+      for (let i = 0; i < n; i++) {
+        const ang = (i / n) * TAU;
+        const r = a.pts[i];
+        const x = Math.cos(ang) * r, y = Math.sin(ang) * r;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    });
+  }
+}
+
+function drawBullets() {
+  ctx.fillStyle = '#fff';
+  for (const b of game.bullets) {
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.radius, 0, TAU);
+    ctx.fill();
+  }
+}
+
+function drawParticles() {
+  for (const p of game.particles) {
+    ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Draw with edge-wrap ghosts so sprites look continuous across borders
+function drawWrapped(x, y, r, fn) {
+  const offs = [[0, 0]];
+  if (x < r)       offs.push([ W, 0]);
+  if (x > W - r)   offs.push([-W, 0]);
+  if (y < r)       offs.push([0,  H]);
+  if (y > H - r)   offs.push([0, -H]);
+  if (x < r     && y < r)     offs.push([ W,  H]);
+  if (x > W - r && y > H - r) offs.push([-W, -H]);
+  if (x < r     && y > H - r) offs.push([ W, -H]);
+  if (x > W - r && y < r)     offs.push([-W,  H]);
+  for (const [ox, oy] of offs) {
+    ctx.save();
+    ctx.translate(x + ox, y + oy);
+    fn();
+    ctx.restore();
+  }
+}
+
+// ============================================================
+//  HUD / overlay
+// ============================================================
+const $score = document.getElementById('score');
+const $lives = document.getElementById('lives');
+const $level = document.getElementById('level');
+const $high  = document.getElementById('high');
+const $mute  = document.getElementById('mute');
+const $overlay = document.getElementById('overlay');
+const $oTitle  = document.getElementById('overlay-title');
+const $oMsg    = document.getElementById('overlay-msg');
+const $oBtn    = document.getElementById('overlay-btn');
+const $oHint   = document.getElementById('overlay-hint');
+
+function updateHUD() {
+  $score.textContent = game.score;
+  $lives.textContent = game.lives;
+  $level.textContent = game.level;
+  $high.textContent  = Math.max(game.high, game.score);
+  $mute.classList.toggle('muted', Audio_.isMuted());
+}
+
+$mute.addEventListener('click',      (e) => { e.stopPropagation(); toggleMute(); });
+$mute.addEventListener('touchstart', (e) => { e.stopPropagation(); e.preventDefault(); toggleMute(); }, { passive: false });
+function toggleMute() { Audio_.toggle(); updateHUD(); }
+
+$oHint.innerHTML = isTouch
+  ? 'Touch: \u25C0 \u25B6 rotate &nbsp;\u00B7&nbsp; \u25B2 thrust &nbsp;\u00B7&nbsp; \u25CF fire (or tap screen)'
+  : 'Keys: \u2190 \u2192 rotate &nbsp;\u00B7&nbsp; \u2191 thrust &nbsp;\u00B7&nbsp; SPACE fire &nbsp;\u00B7&nbsp; M mute';
+
+// Tap anywhere on the overlay (title, message, button) to (re)start.
+// Listen on multiple event types so no platform quirk can block it —
+// a short lock prevents double-fires when pointerdown + click both land.
+let startLock = 0;
+function triggerStart(e) {
+  if ($overlay.classList.contains('hidden')) return;
+  const now = performance.now();
+  if (now - startLock < 400) return;
+  startLock = now;
+  if (e && e.cancelable) e.preventDefault();
+  startGame();
+}
+$overlay.addEventListener('pointerdown', triggerStart);
+$overlay.addEventListener('click',       triggerStart);
+$overlay.addEventListener('touchstart',  triggerStart, { passive: false });
+
+function showOverlay(title, msgHTML, btnLabel) {
+  $oTitle.textContent = title;
+  $oMsg.innerHTML     = msgHTML;
+  $oBtn.textContent   = btnLabel;
+  $overlay.classList.remove('hidden');
+}
+function hideOverlay() { $overlay.classList.add('hidden'); }
+
+showOverlay('ASTEROIDS', 'Destroy the rocks.<br>Survive as long as you can.', 'TAP TO START');
+
+// ============================================================
+//  Main loop
+// ============================================================
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); // cap huge pauses
+  last = now;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
